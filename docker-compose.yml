@@ -1,0 +1,166 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  createbuckets:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ACCESS_KEY} ${MINIO_SECRET_KEY} &&
+      mc mb -p local/${MINIO_BUCKET_IMAGES} || true &&
+      mc mb -p local/${MINIO_BUCKET_MLFLOW} || true &&
+      mc anonymous set download local/${MINIO_BUCKET_IMAGES} ||
+      true
+      "
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.16.0
+    restart: unless-stopped
+    environment:
+      MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri sqlite:///mlflow.db
+      --default-artifact-root s3://${MINIO_BUCKET_MLFLOW}
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow_data:/mlflow
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+      createbuckets:
+        condition: service_completed_successfully
+      mlflow:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      backend:
+        condition: service_started
+    command: celery -A app.celery_app:celery_app worker --loglevel=INFO
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  minio_data:
+  mlflow_data:
+
+  # ---------- Tiered ML workers ----------
+  ml-worker-geo:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.ml
+      args:
+        GEO_REQ: requirements-geo.txt
+        ML_REQ: ""   # somente PDI leve e Geo
+    env_file: .env
+    depends_on:
+      backend:
+        condition: service_started
+    volumes:
+      - ./backend:/app
+    profiles: ["geo"]
+
+  ml-worker-onnx:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.ml
+      args:
+        GEO_REQ: requirements-geo.txt
+        ML_REQ: requirements-ml-onnx.txt
+    env_file: .env
+    depends_on:
+      backend:
+        condition: service_started
+    volumes:
+      - ./backend:/app
+    profiles: ["ml"]
+
+  ml-worker-torch:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.ml
+      args:
+        GEO_REQ: requirements-geo.txt
+        ML_REQ: requirements-ml-torch.txt
+    env_file: .env
+    depends_on:
+      backend:
+        condition: service_started
+    volumes:
+      - ./backend:/app
+    profiles: ["train"]

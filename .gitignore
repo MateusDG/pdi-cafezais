@@ -1,0 +1,22 @@
+# Python / backend
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.env
+dist/
+build/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+
+# Data / artifacts
+data/
+storage/
+mlruns/
+.mlruns/
+
+# OS
+.DS_Store
+Thumbs.db
