@@ -1,3 +1,0 @@
-# Atenção: pesado (pode exigir CUDA específico)
-torch==2.4.1
-ultralytics==8.3.34

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Café Mapper</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 1rem; }
+    .card { max-width: 960px; margin: 0 auto; padding: 1rem; border: 1px solid #ddd; border-radius: 12px; }
+    #map { height: 480px; margin-top: 1rem; border-radius: 8px; }
+    .muted { color: #666; }
+    .btn { padding: .6rem 1rem; border: 0; border-radius: 8px; cursor: pointer; background: #0d6efd; color: #fff; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>☕ Café Mapper</h1>
+    <p class="muted">Faça upload de uma foto aérea (RGB) do cafezal para gerar uma prévia de análise (demo).</p>
+    <form id="uploadForm">
+      <input type="file" name="file" id="file" accept=".jpg,.jpeg,.png" required />
+      <button class="btn" type="submit">Processar</button>
+    </form>
+
+    <div id="result" style="margin-top:1rem; display:none;">
+      <h3>Resultado</h3>
+      <img id="resultImg" alt="resultado" style="max-width:100%; border:1px solid #ddd; border-radius:8px;" />
+      <p class="muted" id="notes"></p>
+    </div>
+
+    <div id="map"></div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const form = document.getElementById('uploadForm');
+    const resultDiv = document.getElementById('result');
+    const resultImg = document.getElementById('resultImg');
+    const notes = document.getElementById('notes');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const res = await fetch('/api/process', { method: 'POST', body: fd });
+      if (!res.ok) { alert('Falha ao processar imagem'); return; }
+      const data = await res.json();
+      resultImg.src = data.result_image_url;
+      notes.textContent = data.notes || '';
+      resultDiv.style.display = 'block';
+    });
+
+    // Mapa Leaflet (placeholder – sem georreferenciamento ainda)
+    const map = L.map('map').setView([-20.0, -40.0], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '&copy; OpenStreetMap'
+    }).addTo(map);
+  </script>
+</body>
+</html>

@@ -1,13 +1,14 @@
-# Build
-FROM node:20-alpine AS builder
-WORKDIR /app
-COPY package.json package-lock.json* pnpm-lock.yaml* yarn.lock* /app/
-RUN if [ -f package-lock.json ]; then npm ci;     elif [ -f pnpm-lock.yaml ]; then npm i -g pnpm && pnpm i;     elif [ -f yarn.lock ]; then yarn; else npm i; fi
-COPY . /app
-RUN npm run build
+FROM node:20-alpine
 
-# Serve
-FROM nginx:alpine
-COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-EXPOSE 80
+WORKDIR /app
+
+# ATENÇÃO: relativo ao contexto ./frontend
+COPY package.json ./
+# se tiver lock, copie também (não é obrigatório):
+# COPY package-lock.json ./
+RUN npm install
+
+COPY . .
+
+EXPOSE 5173
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

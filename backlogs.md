@@ -1,139 +1,111 @@
-# Plano de Execução — PDI para Mapeamento de Cafezais (Somente Imagens de Satélite)
+# Cronograma detalhado (passo a passo)
 
-**Data de início:** 10 Sep 2025 • **Horizonte:** 8 semanas • **Fuso:** America/Sao_Paulo  
-**Premissa:** *Sem drone neste momento* — usar **imagens de satélite** (p.ex., Sentinel‑2 L2A ~10 m, Landsat 8/9 OLI ~30 m) para MVP e validação.  
-**Monorepo base:** `pdi-cafezais-skeleton` (backend FastAPI + PostGIS, Celery/Redis, MinIO/S3, MLflow, frontend Leaflet) com **perfis** para PDI/Geo, ONNX e Torch.
+Abaixo um roteiro **prático** para você (desenvolvedor solo) evoluir do MVP até uma versão usável em campo. Sugestão de  **6–8 semanas** , adaptável.
 
----
+## Semana 0 — Preparação do ambiente
 
-## 1) Objetivo e escopo
-- **Objetivo:** mapear cafezais e **destacar áreas problemáticas** (falhas, ervas daninhas/heterogeneidade, vigor baixo) a partir de **satélite**, gerando **camadas GIS** (GeoJSON/Shapefile) e um **dashboard simples**.
-- **Escopo (MVP):**
-  - Importar cenas (COG/GeoTIFF) → **pré-processar** → **NDVI/EVI** → **segmentar** talhões/áreas de interesse → **detectar anomalias** simples → **mapa final** e **export GIS**.
-  - **Sem treino** no MVP; foco em PDI clássico + regras (threshold/adaptive/k‑means) e estrutura pronta para plugar ML.
+* [ ] Clonar/extrair o projeto e validar build local e com Docker (`docker compose up -d`).
+* [ ] Configurar virtualenv do backend, `pip install -r requirements.txt`.
+* [ ] Subir frontend (Vite) e confirmar proxy `/api` → `8000`.
+* [ ] Criar branch `feat/mvp-pipeline`.
 
-## 2) Requisitos funcionais (RF)
-1. **Upload/registro** de cena/s (URI S3/MinIO ou caminho local) e metadados básicos.
-2. **Pré-processamento**: recorte por AOI, reprojeção para EPSG:4326, mascaramento de nuvem/sombra (quando disponível), filtros (mediana/gauss), equalização/CLAHE.
-3. **Índices**: cálculo de **NDVI** (e **EVI** quando houver NIR/BLUE), estatísticas por AOI/talhão.
-4. **Segmentação** ROI: threshold (Otsu/adaptativo), **watershed** ou **k‑means** (k=2..4) com heurísticas.
-5. **Detecção**: gaps (falhas) por morfologia/área mínima; hotspots de baixa vegetação via score NDVI/EVI; **mapa de classes** simples.
-6. **Exportação**: GeoJSON e Shapefile (polígonos de falha/baixa saúde + grade/heatmap).
-7. **Visualização**: frontend Leaflet com camadas lig/desl, paletas simples e popup com estatísticas.
-8. **Jobs assíncronos** via Celery e **rastreamento** no MLflow (parâmetros e métricas).
+  **Entregáveis:** app abre em `http://localhost:5173` e `http://localhost:8000/api/health` retorna `{"status":"ok"}`.
 
-## 3) Não funcionais (RNF)
-- **Reprodutibilidade** (seed e parâmetros gravados), **execução offline** (MinIO local), **tempo**: cena média processada em ≤ 5–10 min (CPU), **observabilidade** (logs estruturados).
+## Semana 1 — MVP Pipeline (ervas daninhas “simples”)
 
-## 4) Arquitetura e perfis
-- **Backend leve** (CRUD/rotas) + **workers** específicos por perfil:
-  - `geo` → `opencv-python-headless`, `rasterio`, `shapely`
-  - `ml` → `onnxruntime`
-  - `train` → `torch` + `ultralytics` (opcional/pesado)
-- **Rotas disponíveis**: `/inference/geo`, `/inference/onnx`, `/inference/torch` (stubs prontos para evoluir).
+* [ ] Implementar segmentação HSV básica em `services/processing/weed.py`:
 
-## 5) Dados e preparação
-- **Fontes**: Sentinel‑2 (L2A) ou Landsat 8/9 (OLI). **Preferir** cenas com baixa cobertura de nuvem para a AOI.
-- **Formato**: GeoTIFF/COG; **bandas** mínimas: **NIR e RED** (NDVI); opcional **BLUE** (EVI).
-- **AOI**: polígono GeoJSON do(s) talhão(ões) ou bounding box de estudo.
-- **Organização** (MinIO): `s3://raw-images/<projeto>/<data>/<cena>.tif`
+  * Converter para HSV, máscaras de verdes “claros/amarelados” (mato) vs “verde escuro/brilhante” (café).
+  * Remoção de ruído (morfologia) e contorno de blobs (áreas mínimas).
+* [ ] Endpoint `/api/process`: retornar também um **resumo** (qtd. de áreas, área aproximada).
+* [ ] UI: mostrar imagem anotada no React (ou manter na página do backend por enquanto).
 
-## 6) Critérios de aceite do MVP
-- **NDVI** gerado para AOI; **mapa binário** “vegetação vs não‑vegetação” com *F1 ≥ 0,80* em amostras manuais.
-- Detecção de **falhas** (polígonos com área ≥ X m²) exportada em **GeoJSON**.
-- **Frontend** carrega base OSM + camadas GeoJSON; popup com estatísticas por polígono (NDVI médio, área).
-- Pipeline roda via **POST `/inference/geo`** com parâmetros (AOI, URIs, thresholds).
+  **Critério de aceite:** imagem de teste gera contornos plausíveis de invasoras sem muitos falsos positivos.
 
----
+## Semana 2 — Vigor (cor de folhas) e Falhas
 
-## 7) Cronograma detalhado (8 semanas)
+* [ ] `vigor.py`: índice **Excess Green (ExG)** ou variações RGB para mapear vigor (heatmap).
+* [ ] `gaps.py`: heurística de  **falhas de plantio** :
 
-### Semana 1 — Fundamentos & dados (10 Sep 2025–16 Sep 2025)
-- Ajustar `.env` e subir stack base (`docker compose up -d`).
-- Ativar **profile geo**: `docker compose --profile geo up -d --build ml-worker-geo`.
-- Definir **AOI** (GeoJSON) e **cenas** alvo (2–3 datas) e organizar no MinIO.
-- Implementar **reader Rasterio** + recorte por AOI; utilitário de **reprojeção** e **stats**.
+  * Detectar padrão/linhas (básico) ou grid + threshold de “solo exposto”.
+  * Marcar “buracos” acima de área mínima.
+* [ ] Backend: retornar **GeoJSON** (polígonos/pontos) além da imagem.
+* [ ] Frontend: renderizar **camadas no Leaflet** (polígonos de daninhas, pontos de falhas, raster/heatmap opcional).
 
-**Entrega:** função `read_and_crop()` + rota inicial `/inference/geo` com parâmetros de AOI/URI.  
+  **Critério de aceite:** visualizar no mapa as camadas separadas (ligar/desligar) e resumo numérico no painel.
 
-### Semana 2 — Pré-processamento (17 Sep 2025–23 Sep 2025)
-- **Máscara de nuvem** quando disponível; fallback por thresholds de brilho.
-- **Filtros**: mediana/gauss + **CLAHE** opcional.
-- Normalização e checagem de **no‑data** / *transform*. Logs com parâmetros.
+## Semana 3 — UX, robustez e testes
 
-**Entrega:** módulo `preprocessing/` com pipeline encadeado + métricas de tempo no MLflow.
+* [ ] UI: tela única com cards:  **Upload → Resultado → Mapa → Sumário** .
+* [ ] Tratamento de erros (tamanho/formatos de imagem, timeouts).
+* [ ] Testes básicos (unitários) de utilitários (ex.: máscaras e limiares).
+* [ ] Perfil de performance: otimizar leitura/escrita de imagens, evitar cópias desnecessárias.
+* [ ] Doc: atualizar `USER_GUIDE.md` com fotos de exemplo e dicas de captura (altitude, iluminação).
 
-### Semana 3 — Índices de vegetação (24 Sep 2025–30 Sep 2025)
-- Implementar **NDVI** (NIR/RED) e **EVI** (se BLUE disponível).
-- Geração de **rasters** e **stats** (média, p5/p95, histograma por AOI).
+  **Critério de aceite:** fluxo suave de upload; erros exibidos de forma amigável; testes passando.
 
-**Entrega:** endpoints para calcular/exportar NDVI/EVI (GeoTIFF) e salvar stats no MLflow.
+## Semana 4 — Mosaico simples e ajustes de campo
 
-### Semana 4 — Segmentação ROI (01 Oct 2025–07 Oct 2025)
-- **Threshold** (Otsu/adaptativo) → **mask vegetação**.
-- Alternativa **k‑means** (k=2..4) sobre [NDVI, RED, NIR].
-- **Morfologia** (open/close) para limpar ruído; **watershed** em casos complexos.
+* [ ] Permitir upload de **múltiplas imagens** e processar individualmente (por ora sem “stitch”).
+* [ ] Implementar **equalização/normalização** simples de cor para reduzir efeito de sombra/iluminação.
+* [ ] Flag de “sensibilidade” (slider) para o produtor calibrar o quão agressiva é a detecção.
+* [ ] Logging básico e métricas de execução.
 
-**Entrega:** `mask_veg.tif` + **GeoJSON** vetorizado (contornos).
+  **Critério de aceite:** usuário consegue ajustar sensibilidade e obter resultados mais estáveis.
 
-### Semana 5 — Detecção de problemas (08 Oct 2025–14 Oct 2025)
-- **Falhas**: detectar gaps por *connected components* + área mínima (paramétrica).
-- **Baixo vigor**: “hotspots” com NDVI < T (por percentil).
-- **Ervas daninhas** (MVP): heterogeneidade de textura/cor (GLCM simples/entropia) — *heurística*.
+## Semana 5 — Pré-piloto (refino e pacote)
 
-**Entrega:** `problems.geojson` com classes {{falha, baixo_vigor, heterog}} + atributos (área, score).
+* [ ] Gerar **relatório** simples (HTML/PDF) com miniaturas e contagens por tipo (mato, falhas, baixa cor).
+* [ ] Script `scripts/export_report.py` (opcional) para lote.
+* [ ] Configurar build **Docker** reprodutível e validar em outra máquina.
+* [ ] Preparar conjunto de **imagens reais** (se possível) para ensaio.
 
-### Semana 6 — Mapa & frontend (15 Oct 2025–21 Oct 2025)
-- Camadas no **Leaflet** (NDVI como *tile* básico + **GeoJSON** de problemas).
-- **Popup** com estatísticas; legenda simples; *toggle* de camadas.
+  **Critério de aceite:** relatório gerado com sumário e links para imagens/camadas.
 
-**Entrega:** frontend com camadas; rota de **download** (GeoJSON/Shapefile).
+## Semana 6 — Piloto de campo
 
-### Semana 7 — Qualidade, export e automação (22 Oct 2025–28 Oct 2025)
-- **Exportadores** (GeoJSON, Shapefile). Validação no QGIS.
-- **Jobs Celery** parametrizados; *retry/backoff*; logs/erros clareados.
-- **MLflow**: parâmetros (thresholds, janela CLAHE, k) + métricas (F1 vegetação, #gaps, área).
+* [ ] Rodar com 1–2 talhões reais (se ainda sem drone, usar imagens públicas/bancos internos).
+* [ ] Coletar feedback: falsos positivos, legibilidade do mapa, termos na UI.
+* [ ] Ajustar thresholds, regras morfológicas e tamanho mínimo de blob.
 
-**Entrega:** processamento idempotente por cena; reprocessamento com versionamento leve.
+  **Critério de aceite:** feedback de “utilidade prática” positivo; lista de melhorias priorizada.
 
-### Semana 8 — Piloto & ajustes (29 Oct 2025–04 Nov 2025)
-- Rodar **piloto** em 1–2 áreas; coletar **amostras manuais** p/ validação.
-- Ajustar thresholds e heurísticas; consolidar documentação **README** + exemplos.
+## Semana 7 — Polimento e “v1”
 
-**Entrega final:** pacote com **NDVI**, **problems.geojson**, prints de mapa e parâmetros usados.
+* [ ] Guardar **projetos** (metadados por execução) em SQLite (data, notas, estatísticas).
+* [ ] Tela “Histórico” (listar processamentos anteriores e reabrir resultados).
+* [ ] Melhorar responsividade (mobile) e acessibilidade (contraste, fontes).
+* [ ] Hardening: limites de upload, varredura de extensão, mensagens localizadas.
+
+  **Critério de aceite:** histórico funcionando e UX estável.
+
+## Semana 8 — Próximos passos (opcional)
+
+* [ ] Acrescentar **filtros por iluminação** (sombreamento) e pós-processamento de bordas.
+* [ ] “Comparar datas” (lado a lado) para ver evolução pós-intervenção.
+* [ ] Início de um classificador leve (sem treinar ainda) e pipeline para anotação manual (futuro ML).
+
+  **Critério de aceite:** comparador de datas básico e backlog de IA definido.
 
 ---
 
-## 8) Backlog (épicos → histórias)
-- **Dados/Infra**: upload/URI, AOI, MinIO buckets, validação de metadados.
-- **PDI**: pré-processamento, NDVI/EVI, segmentação, morfologia, vetorização.
-- **Detecção**: gaps, baixo vigor, heterogeneidade.
-- **Export/Visual**: GeoJSON/Shapefile, frontend Leaflet, legenda/popup.
-- **Ops**: Celery (retry), MLflow (tracking), logs e testes.
+## Backlog técnico (resumo de tarefas)
 
-> Cada história deve ter **DoD**: entrada/saída definidas, parâmetros registrados, teste de unidade, exemplo reproduzível e registro no MLflow.
+**Backend**
 
-## 9) Riscos e mitigação
-- **Nuvem/sombra** alta → escolher datas alternativas; mascarar nuvem; interpolar temporalmente (futuro).
-- **Resolução** (10–30 m) limita micro‑falhas → trabalhar com **área mínima** e validação por amostragem.
-- **Registro/CRS** → reprojeção automática e checagem de *transform* antes de operar.
+* [ ] `/api/process` retornar: `result_image_url`, `summary`, `geojson_weeds`, `geojson_gaps`, `raster_vigor_url`.
+* [ ] Implementar ExG e heatmap (salvar em `static/results/`).
+* [ ] Normalização de cor (CLAHE/opencv) opcional por parâmetro.
+* [ ] Limites de upload e validações.
 
-## 10) Como executar agora
-```bash
-# subir serviços base
-cp .env.example .env
-docker compose up -d --build
+**Frontend**
 
-# ativar worker PDI/Geo (leve)
-docker compose --profile geo up -d --build ml-worker-geo
+* [ ] Camadas Leaflet (toggle): Daninhas (polígono), Falhas (pontos), Vigor (tile/raster ou canvas overlay).
+* [ ] Painel lateral com métricas: % área afetada, nº de falhas, etc.
+* [ ] Upload arrasta-e-solta, barra de progresso.
 
-# testar stub e depois plugar pipeline real em backend/app/modules/
-curl -X POST http://localhost:8000/inference/geo
-```
+**DevOps**
 
----
-
-## 11) Próximas melhorias (opcionais pós-MVP)
-- **ONNX Runtime** para inferência de modelos pré‑treinados (classe/segmentação) → profile `ml`.
-- **YOLO/Ultralytics** para detecção de “falhas” ou pragas em imagens de maior resolução (quando houver) → profile `train`.
-- **Camada temporal** (séries NDVI): tendência e alertas por talhão.
+* [ ] Logs estruturados (nível INFO/ERROR).
+* [ ] Script de seed com imagens exemplo em `data/samples/`.
+* [ ] CI simples (lint + tests).

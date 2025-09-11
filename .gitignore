@@ -1,22 +1,14 @@
-# Python / backend
+
+# Python
 __pycache__/
-*.py[cod]
-*.egg-info/
+*.pyc
 .venv/
 .env
-dist/
-build/
-
-# Node / frontend
+# Data
+data/outputs/
+backend/app/static/results/
+# Node
 node_modules/
-frontend/dist/
-
-# Data / artifacts
-data/
-storage/
-mlruns/
-.mlruns/
-
 # OS
 .DS_Store
 Thumbs.db
