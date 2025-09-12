@@ -160,13 +160,14 @@ def create_green_gate_hsv(img: np.ndarray,
     return green_gate.astype(np.uint8) * 255
 
 
-def calculate_exgr_with_gate(img: np.ndarray, green_gate: np.ndarray) -> Tuple[np.ndarray, float]:
+def calculate_vegetation_index_with_gate(img: np.ndarray, green_gate: np.ndarray, index_type: str = 'ExGR') -> Tuple[np.ndarray, float]:
     """
-    Calcula índice ExGR apenas dentro do gate verde com Otsu local.
+    Calcula índice de vegetação apenas dentro do gate verde com Otsu local.
     
     Args:
         img: Imagem RGB
         green_gate: Máscara do gate verde
+        index_type: Tipo do índice ('ExG', 'ExGR', 'CIVE')
     
     Returns:
         Tupla (vegetation_mask, threshold_used)
@@ -176,11 +177,28 @@ def calculate_exgr_with_gate(img: np.ndarray, green_gate: np.ndarray) -> Tuple[n
     g = img[:, :, 1].astype(np.float32) / 255.0  
     b = img[:, :, 2].astype(np.float32) / 255.0
     
-    # Calculate ExGR = (2g - r - b) - (1.4r - b) = 2g - 2.4r
-    exgr = 2 * g - 2.4 * r
+    # Calculate index based on type
+    if index_type == 'ExG':
+        index = 2 * g - r - b
+    elif index_type == 'ExGR':
+        exg = 2 * g - r - b
+        exr = 1.4 * r - b
+        index = exg - exr
+    elif index_type == 'CIVE':
+        R = img[:, :, 0].astype(np.float32)
+        G = img[:, :, 1].astype(np.float32)
+        B = img[:, :, 2].astype(np.float32)
+        index = 0.441 * R - 0.811 * G + 0.385 * B + 18.78745
+        # Normalize CIVE to [0, 1] range
+        index = (index - np.min(index)) / (np.max(index) - np.min(index) + 1e-10)
+    else:
+        # Default to ExGR
+        exg = 2 * g - r - b
+        exr = 1.4 * r - b
+        index = exg - exr
     
     # Get pixels within green gate only
-    gate_pixels = exgr[green_gate > 0]
+    gate_pixels = index[green_gate > 0]
     
     if len(gate_pixels) < 100:
         # Not enough green pixels, return empty mask
@@ -196,11 +214,11 @@ def calculate_exgr_with_gate(img: np.ndarray, green_gate: np.ndarray) -> Tuple[n
     # Apply Otsu only to gate pixels
     threshold_otsu, _ = cv2.threshold(gate_normalized, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     
-    # Convert back to original ExGR scale
+    # Convert back to original scale
     threshold_original = gate_min + (threshold_otsu / 255.0) * (gate_max - gate_min)
     
     # Create vegetation mask
-    vegetation_mask = (exgr > threshold_original) & (green_gate > 0)
+    vegetation_mask = (index > threshold_original) & (green_gate > 0)
     
     return vegetation_mask.astype(np.uint8) * 255, float(threshold_original)
 
@@ -334,6 +352,8 @@ def create_soil_mask(img: np.ndarray) -> np.ndarray:
 def oblique_weed_detection_pipeline(img: np.ndarray,
                                    sensitivity: float = 0.5,
                                    normalize_illumination: bool = True,
+                                   primary_index: str = 'ExGR',
+                                   row_spacing_px: int = None,
                                    enable_row_detection: bool = True) -> Dict[str, Any]:
     """
     Pipeline completo para detecção robusta em fotos oblíquas.
@@ -342,6 +362,8 @@ def oblique_weed_detection_pipeline(img: np.ndarray,
         img: Imagem RGB [0-255]
         sensitivity: Sensibilidade (afeta áreas mínimas)
         normalize_illumination: Aplicar normalização
+        primary_index: Índice de vegetação principal ('ExG', 'ExGR', 'CIVE')
+        row_spacing_px: Espaçamento entre fileiras em pixels (auto se None)
         enable_row_detection: Tentar detectar linhas (pode ser desabilitado)
     
     Returns:
@@ -381,13 +403,13 @@ def oblique_weed_detection_pipeline(img: np.ndarray,
         green_gate = cv2.bitwise_and(green_gate, ground_roi)
         results['green_gate'] = green_gate
         
-        # 4. Índice ExGR + limiarização
-        logger.info("Calculating ExGR index with Otsu thresholding")
-        vegetation_mask, threshold_used = calculate_exgr_with_gate(processed_img, green_gate)
+        # 4. Índice de vegetação + limiarização
+        logger.info(f"Calculating {primary_index} index with Otsu thresholding")
+        vegetation_mask, threshold_used = calculate_vegetation_index_with_gate(processed_img, green_gate, primary_index)
         # Intersect with ROI
         vegetation_mask = cv2.bitwise_and(vegetation_mask, ground_roi)
         results['vegetation_mask'] = vegetation_mask
-        results['exgr_threshold'] = threshold_used
+        results['vegetation_threshold'] = threshold_used
         
         # 5. Pós-processamento morfológico
         logger.info("Morphological cleanup")
@@ -402,6 +424,11 @@ def oblique_weed_detection_pipeline(img: np.ndarray,
         # 6. Fileiras do café (opcional/condicional)
         logger.info("Attempting crop row detection")
         if enable_row_detection:
+            # Auto-estimate row spacing if not provided
+            if row_spacing_px is None:
+                h, w = img.shape[:2]
+                row_spacing_px = int(max(60, min(120, w // 8)) * (0.8 + sensitivity * 0.4))
+            
             row_mask, rows_reliable, dominant_angle = detect_crop_rows_reliable(
                 vegetation_mask, min_lines=30, max_angle_std=6.0
             )
