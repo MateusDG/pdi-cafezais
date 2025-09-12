@@ -326,7 +326,7 @@ def robust_weed_detection_pipeline(img: np.ndarray,
                                  row_spacing_px: int = 80,
                                  row_width_px: int = 40) -> Dict[str, Any]:
     """
-    Pipeline completo de detecção robusta de ervas daninhas.
+    Pipeline corrigido de detecção robusta de ervas daninhas.
     
     Args:
         img: Imagem RGB [0-255]
@@ -338,47 +338,96 @@ def robust_weed_detection_pipeline(img: np.ndarray,
     Returns:
         Dicionário com todos os resultados
     """
+    from . import sky_detection
+    
     results = {}
     
-    # 1. Illumination normalization (optional but recommended)
+    # 1. Sky detection and working region
+    sky_mask = sky_detection.detect_sky_mask(img)
+    working_region = sky_detection.get_working_region_mask(img, bottom_fraction=0.7)
+    results['sky_mask'] = sky_mask
+    results['working_region'] = working_region
+    
+    # 2. Illumination normalization (optional, only in working region)
     processed_img = img.copy()
     if normalize_illumination:
-        # Gamma correction
-        img_normalized = processed_img.astype(np.float32) / 255.0
-        img_gamma = gamma_correction(img_normalized, gamma=2.2)
-        processed_img = (img_gamma * 255).astype(np.uint8)
-        
-        # White balance
-        processed_img = shades_of_gray_white_balance(processed_img)
-        
-        # Simple Retinex
-        processed_img = simple_retinex(processed_img, sigma=15.0)
+        # Apply only to working region to avoid sky distortion
+        work_area = working_region > 0
+        if np.any(work_area):
+            work_img = img[work_area].reshape(-1, 3)
+            
+            # Gamma correction
+            img_normalized = work_img.astype(np.float32) / 255.0
+            img_gamma = gamma_correction(img_normalized, gamma=2.2)
+            work_processed = (img_gamma * 255).astype(np.uint8)
+            
+            # Update only working region
+            processed_img[work_area] = work_processed.reshape(-1, 3)[0:np.sum(work_area)]
     
     results['processed_image'] = processed_img
     
-    # 2. Calculate vegetation indices
-    indices = calculate_vegetation_indices(processed_img)
-    results['vegetation_indices'] = indices
+    # 3. Create conservative vegetation gate
+    green_gate = sky_detection.create_vegetation_gate(processed_img)
+    # Remove sky from gate
+    green_gate = cv2.bitwise_and(green_gate, cv2.bitwise_not(sky_mask))
+    # Restrict to working region
+    green_gate = cv2.bitwise_and(green_gate, working_region)
+    results['green_gate'] = green_gate
     
-    # 3. Create vegetation mask
-    vegetation_mask = create_vegetation_mask(indices, primary_index)
+    # 4. Apply conservative vegetation indices
+    vegetation_mask = sky_detection.apply_conservative_vegetation_indices(
+        processed_img, green_gate, primary_index
+    )
     results['vegetation_mask'] = vegetation_mask
     
-    # 4. Detect crop row orientation
-    dominant_angle = detect_crop_row_orientation(vegetation_mask)
+    # 5. Detect crop row orientation (conservative)
+    dominant_angle = sky_detection.detect_row_orientation_conservative(vegetation_mask)
     results['dominant_angle'] = dominant_angle
     
-    # 5. Create crop row mask
-    row_mask = create_crop_row_mask(vegetation_mask, dominant_angle, row_spacing_px, row_width_px)
+    # 6. Create restricted row mask
+    if abs(dominant_angle) > 5:  # Only if strong orientation detected
+        row_mask = sky_detection.create_row_mask_restricted(
+            vegetation_mask, dominant_angle, row_spacing_px
+        )
+    else:
+        # No clear rows detected, treat all vegetation as potential crop
+        row_mask = vegetation_mask.copy()
     results['row_mask'] = row_mask
     
-    # 6. Detect inter-row weeds
-    weed_mask, weed_stats = detect_inter_row_weeds(vegetation_mask, row_mask)
+    # 7. Detect inter-row weeds with safety margin
+    safety_margin = 10  # pixels
+    dilated_rows = cv2.dilate(row_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (safety_margin, safety_margin)))
+    weed_mask = cv2.bitwise_and(vegetation_mask, cv2.bitwise_not(dilated_rows))
+    
+    # Clean up small areas
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    weed_mask = cv2.morphologyEx(weed_mask, cv2.MORPH_CLOSE, kernel)
+    
+    # Remove very small weeds
+    from skimage import morphology
+    weed_mask = morphology.remove_small_objects(
+        weed_mask > 0, min_size=50, connectivity=2
+    ).astype(np.uint8) * 255
+    
+    # Calculate statistics in working area only
+    contours, _ = cv2.findContours(weed_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    total_weed_area = sum(cv2.contourArea(c) for c in contours)
+    working_area = cv2.countNonZero(working_region)  # Only count working region
+    
+    weed_stats = {
+        'weed_count': len(contours),
+        'total_weed_area': int(total_weed_area),
+        'weed_percentage': (total_weed_area / working_area) * 100 if working_area > 0 else 0,
+        'contours': contours
+    }
+    
     results['weed_mask'] = weed_mask
     results['weed_statistics'] = weed_stats
     
-    # 7. Create annotated visualization
-    annotated = create_robust_annotation(img, vegetation_mask, row_mask, weed_mask, weed_stats['contours'])
+    # 8. Create corrected visualization
+    annotated = create_corrected_annotation(
+        img, vegetation_mask, row_mask, weed_mask, contours, sky_mask, working_region
+    )
     results['annotated_image'] = annotated
     
     return results
@@ -438,5 +487,82 @@ def create_robust_annotation(original_img: np.ndarray,
                (15, 70), font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
     cv2.putText(annotated, f"Deteccao geometrica + ExGR/CIVE", 
                (15, 90), font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+    
+    return annotated
+
+
+def create_corrected_annotation(original_img: np.ndarray,
+                              vegetation_mask: np.ndarray,
+                              row_mask: np.ndarray, 
+                              weed_mask: np.ndarray,
+                              weed_contours,
+                              sky_mask: np.ndarray,
+                              working_region: np.ndarray) -> np.ndarray:
+    """
+    Cria visualização corrigida sem falsos positivos no céu.
+    
+    Args:
+        original_img: Imagem original
+        vegetation_mask: Máscara de vegetação (sem céu)
+        row_mask: Máscara das linhas (restrita à vegetação)
+        weed_mask: Máscara de ervas daninhas
+        weed_contours: Contornos das ervas daninhas
+        sky_mask: Máscara do céu detectado
+        working_region: Região de trabalho
+    
+    Returns:
+        Imagem anotada corrigida
+    """
+    annotated = original_img.copy()
+    
+    # Create overlay only in working region
+    overlay = np.zeros_like(original_img)
+    
+    # Crop rows in green (only where there's vegetation, no sky)
+    valid_rows = cv2.bitwise_and(row_mask, cv2.bitwise_not(sky_mask))
+    valid_rows = cv2.bitwise_and(valid_rows, working_region)
+    overlay[valid_rows > 0] = [0, 200, 0]  # Darker green
+    
+    # Inter-row weeds in red (only in working region, no sky)
+    valid_weeds = cv2.bitwise_and(weed_mask, cv2.bitwise_not(sky_mask))
+    valid_weeds = cv2.bitwise_and(valid_weeds, working_region)
+    overlay[valid_weeds > 0] = [255, 0, 0]
+    
+    # Blend overlay with original (lighter blend)
+    annotated = cv2.addWeighted(annotated, 0.8, overlay, 0.2, 0)
+    
+    # Draw weed contours (only in working region)
+    for contour in weed_contours:
+        # Check if contour is in working region
+        x, y, w, h = cv2.boundingRect(contour)
+        if np.any(working_region[y:y+h, x:x+w]):
+            cv2.drawContours(annotated, [contour], -1, (255, 0, 0), 2)
+    
+    # Add corrected statistics overlay
+    weed_count = len(weed_contours)
+    total_area = sum(cv2.contourArea(c) for c in weed_contours)
+    working_area = cv2.countNonZero(working_region)
+    weed_percentage = (total_area / working_area) * 100 if working_area > 0 else 0
+    
+    # Mark sky region with faded overlay
+    sky_overlay = annotated.copy()
+    sky_overlay[sky_mask > 0] = [200, 200, 255]  # Light blue tint
+    annotated = cv2.addWeighted(annotated, 0.9, sky_overlay, 0.1, 0)
+    
+    # Info box (corrected)
+    cv2.rectangle(annotated, (10, 10), (500, 120), (0, 0, 0), -1)
+    cv2.rectangle(annotated, (10, 10), (500, 120), (255, 255, 255), 2)
+    
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    cv2.putText(annotated, f"Pipeline Corrigido - Indices Conservativos", 
+               (15, 30), font, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+    cv2.putText(annotated, f"Ervas daninhas: {weed_count} areas ({weed_percentage:.1f}% da area util)", 
+               (15, 50), font, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+    cv2.putText(annotated, f"Verde=Linhas Cultivo, Vermelho=Invasoras, Azul=Ceu Ignorado", 
+               (15, 70), font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+    cv2.putText(annotated, f"Gate Verde + ExGR + Geometria Restrita", 
+               (15, 90), font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+    cv2.putText(annotated, f"Calculo apenas na regiao inferior (area util)", 
+               (15, 110), font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
     
     return annotated

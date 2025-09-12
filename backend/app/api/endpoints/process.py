@@ -6,7 +6,7 @@ import logging
 from typing import Optional
 
 from app.core.config import settings
-from app.services.processing import weed, utils, robust_detection
+from app.services.processing import weed, utils, robust_detection, oblique_pipeline
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 async def process_image(
     file: UploadFile = File(...), 
     sensitivity: float = Query(0.5, ge=0.0, le=1.0, description="Sensibilidade de detecção (0.0-1.0)"),
-    algorithm: str = Query("vegetation_indices", description="Algoritmo: 'vegetation_indices' (robusto) ou 'hsv_fallback'"),
+    algorithm: str = Query("oblique_pipeline", description="Algoritmo: 'oblique_pipeline' (completo), 'vegetation_indices' (robusto) ou 'hsv_fallback'"),
     normalize_illumination: bool = Query(True, description="Aplicar normalização de iluminação"),
     primary_index: str = Query("ExGR", description="Índice primário: 'ExG', 'ExGR', ou 'CIVE'"),
     row_spacing_px: Optional[int] = Query(None, description="Espaçamento entre linhas em pixels (auto se None)")
@@ -80,15 +80,25 @@ async def process_image(
         # Calculate image statistics
         image_stats = utils.calculate_image_stats(img_bgr)
         
-        # Perform robust weed detection
-        weed_data = robust_detection.detect_weeds_robust_pipeline(
-            img=img_rgb, 
-            sensitivity=sensitivity,
-            algorithm=algorithm,
-            normalize_illumination=normalize_illumination,
-            primary_index=primary_index,
-            row_spacing_px=row_spacing_px
-        )
+        # Perform weed detection based on algorithm choice
+        if algorithm == "oblique_pipeline":
+            weed_data = oblique_pipeline.oblique_weed_detection_pipeline(
+                img=img_rgb, 
+                sensitivity=sensitivity,
+                normalize_illumination=normalize_illumination,
+                primary_index=primary_index,
+                row_spacing_px=row_spacing_px
+            )
+        else:
+            # Use robust detection for backward compatibility
+            weed_data = robust_detection.detect_weeds_robust_pipeline(
+                img=img_rgb, 
+                sensitivity=sensitivity,
+                algorithm=algorithm,
+                normalize_illumination=normalize_illumination,
+                primary_index=primary_index,
+                row_spacing_px=row_spacing_px
+            )
         
         # Convert annotated image back to BGR for saving
         img_annotated_bgr = utils.rgb_to_bgr(weed_data['annotated_image'])

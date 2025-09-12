@@ -49,19 +49,31 @@ def detect_weeds_robust_pipeline(img: np.ndarray,
                 row_width_px=row_width_px
             )
             
-            # Extract results
+            # Extract results from corrected pipeline
             weed_stats = pipeline_results['weed_statistics']
             vegetation_mask = pipeline_results['vegetation_mask']
             row_mask = pipeline_results['row_mask']
+            working_region = pipeline_results.get('working_region', None)
             
-            # Calculate enhanced statistics
-            image_area = h * w
-            vegetation_area = cv2.countNonZero(vegetation_mask)
-            row_area = cv2.countNonZero(row_mask)
-            
-            vegetation_percentage = (vegetation_area / image_area) * 100
-            crop_percentage = (row_area / image_area) * 100
-            bare_soil_percentage = 100 - vegetation_percentage
+            # Calculate statistics using working region (not full image)
+            if working_region is not None:
+                working_area = cv2.countNonZero(working_region)
+                vegetation_area = cv2.countNonZero(vegetation_mask)
+                row_area = cv2.countNonZero(row_mask)
+                
+                # Percentages relative to working area (excludes sky)
+                vegetation_percentage = (vegetation_area / working_area) * 100 if working_area > 0 else 0
+                crop_percentage = (row_area / working_area) * 100 if working_area > 0 else 0 
+                bare_soil_percentage = 100 - vegetation_percentage
+            else:
+                # Fallback to old calculation if no working region
+                image_area = h * w
+                vegetation_area = cv2.countNonZero(vegetation_mask)
+                row_area = cv2.countNonZero(row_mask)
+                
+                vegetation_percentage = (vegetation_area / image_area) * 100
+                crop_percentage = (row_area / image_area) * 100
+                bare_soil_percentage = 100 - vegetation_percentage
             
             # Calculate area statistics for weeds
             contour_areas = [cv2.contourArea(c) for c in weed_stats['contours']]
