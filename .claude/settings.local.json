@@ -6,7 +6,8 @@
       "Bash(docker:*)",
       "Bash(docker-compose:*)",
       "Bash(npm install)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(pip install:*)"
     ],
     "deny": [],
     "ask": []
