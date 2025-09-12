@@ -225,13 +225,13 @@ body {
   gap: 1.5rem;
 }
 
-.file-input-group, .sensitivity-group {
+.file-input-group, .sensitivity-group, .algorithm-group {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
 }
 
-.file-input-group label, .sensitivity-group label {
+.file-input-group label, .sensitivity-group label, .algorithm-group label {
   font-weight: 600;
   color: #2c3e50;
   font-size: 1rem;
@@ -602,4 +602,44 @@ body {
   .upload-section, .analysis-result, .map-section, .app-footer {
     padding: 1rem;
   }
+}
+
+/* Algorithm Selection Styles */
+.algorithm-select {
+  padding: 0.8rem;
+  border: 2px solid #27ae60;
+  border-radius: 8px;
+  background: white;
+  font-size: 1rem;
+  color: #2c3e50;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.algorithm-select:focus {
+  outline: none;
+  border-color: #2ecc71;
+  box-shadow: 0 0 0 3px rgba(46, 204, 113, 0.1);
+}
+
+.algorithm-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.algorithm-description {
+  font-size: 0.85rem;
+  color: #7f8c8d;
+  font-style: italic;
+  min-height: 1.2rem;
+  margin-top: 0.25rem;
+}
+
+.algorithm-select optgroup {
+  font-weight: bold;
+  color: #2c3e50;
+}
+
+.algorithm-select option {
+  padding: 0.5rem;
 }

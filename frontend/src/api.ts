@@ -49,11 +49,11 @@ export interface ProcessStatusResponse {
   version: string
 }
 
-export async function uploadImage(file: File, sensitivity: number = 0.5): Promise<ProcessResult> {
+export async function uploadImage(file: File, sensitivity: number = 0.5, algorithm: string = 'oblique_pipeline'): Promise<ProcessResult> {
   const fd = new FormData()
   fd.append('file', file)
   
-  const url = `/api/process?sensitivity=${sensitivity}`
+  const url = `/api/process?sensitivity=${sensitivity}&algorithm=${algorithm}`
   const res = await fetch(url, { method: 'POST', body: fd })
   
   if (!res.ok) {

@@ -7,7 +7,9 @@
       "Bash(docker-compose:*)",
       "Bash(npm install)",
       "Bash(curl:*)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "Bash(npm run build:*)",
+      "Bash(winpty docker exec -it cafe-mapper-api python ml_system/training/final_working_trainer.py)"
     ],
     "deny": [],
     "ask": []

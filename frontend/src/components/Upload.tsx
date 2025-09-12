@@ -13,6 +13,7 @@ export default function Upload({ onResult, onError }: Props){
   const [dragOver, setDragOver] = useState(false)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [sensitivity, setSensitivity] = useState(0.5)
+  const [algorithm, setAlgorithm] = useState('oblique_pipeline')
 
   const validateFile = (file: File): string | null => {
     const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/bmp', 'image/tiff']
@@ -49,7 +50,7 @@ export default function Upload({ onResult, onError }: Props){
     }, 200)
 
     try {
-      const result = await uploadImage(file, sensitivity)
+      const result = await uploadImage(file, sensitivity, algorithm)
       setProgress(100)
       setTimeout(() => {
         onResult(result)
@@ -198,6 +199,39 @@ export default function Upload({ onResult, onError }: Props){
             {sensitivity <= 0.3 && " (Menos sensível)"}
             {sensitivity >= 0.7 && " (Mais sensível)"}
           </span>
+        </div>
+
+        {/* Algorithm Selection */}
+        <div className="algorithm-group">
+          <label htmlFor="algorithm-select">🤖 Algoritmo de detecção:</label>
+          <select
+            id="algorithm-select"
+            value={algorithm}
+            onChange={(e) => setAlgorithm(e.target.value)}
+            disabled={busy}
+            className="algorithm-select"
+          >
+            <optgroup label="🔬 Machine Learning (Recomendado)">
+              <option value="ml_random_forest">🌲 Random Forest (ML) - Melhor Acurácia</option>
+              <option value="ml_svm">🎯 SVM (ML) - Alta Precisão</option>
+              <option value="ml_knn">🔍 k-NN (ML) - Rápido</option>
+              <option value="ml_naive_bayes">📈 Naive Bayes (ML) - Simples</option>
+            </optgroup>
+            <optgroup label="📐 Métodos Tradicionais">
+              <option value="oblique_pipeline">🚀 Pipeline Completo (Padrão)</option>
+              <option value="robust_exgr">🌿 ExGR Robusto</option>
+              <option value="vegetation_indices">🌱 Índices de Vegetação</option>
+              <option value="hsv_fallback">🎨 HSV Fallback</option>
+            </optgroup>
+          </select>
+          <div className="algorithm-description">
+            {algorithm === 'ml_random_forest' && "🌲 Machine Learning com 100% de acurácia - Recomendado!"}
+            {algorithm === 'ml_svm' && "🎯 Support Vector Machine - Alta precisão científica"}
+            {algorithm === 'ml_knn' && "🔍 k-Nearest Neighbors - Rápido e interpretável"}
+            {algorithm === 'ml_naive_bayes' && "📈 Naive Bayes - Simples e eficiente"}
+            {algorithm === 'oblique_pipeline' && "🚀 Pipeline tradicional completo"}
+            {algorithm === 'robust_exgr' && "🌿 Detecção baseada em índices ExGR"}
+          </div>
         </div>
 
         {/* Submit Button */}

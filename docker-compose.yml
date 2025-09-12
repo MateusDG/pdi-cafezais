@@ -23,6 +23,8 @@ services:
       - cafe-data:/app/data
       - cafe-results:/app/app/static/results
       - ./backend/app:/app/app:ro  # Read-only code mount for development
+      - ./backend/models:/app/models  # ML models directory
+      - ./backend/ml_system:/app/ml_system  # ML system directory
     environment:
       - ENV=production
       - DATA_DIR=/app/data
