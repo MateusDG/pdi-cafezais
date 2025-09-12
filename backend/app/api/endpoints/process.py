@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 async def process_image(
     file: UploadFile = File(...), 
     sensitivity: float = Query(0.5, ge=0.0, le=1.0, description="Sensibilidade de detecção (0.0-1.0)"),
-    algorithm: str = Query("oblique_pipeline", description="Algoritmo: 'oblique_pipeline' (completo), 'vegetation_indices' (robusto) ou 'hsv_fallback'"),
+    algorithm: str = Query("oblique_pipeline", description="Algoritmo: 'oblique_pipeline' (completo), 'robust_exgr' (ExGR+Otsu permissivo), 'robust_exgr_v1' (ExGR+Otsu conservador), 'vegetation_indices' (robusto) ou 'hsv_fallback'"),
     normalize_illumination: bool = Query(True, description="Aplicar normalização de iluminação"),
     primary_index: str = Query("ExGR", description="Índice primário: 'ExG', 'ExGR', ou 'CIVE'"),
     row_spacing_px: Optional[int] = Query(None, description="Espaçamento entre linhas em pixels (auto se None)")
@@ -89,6 +89,12 @@ async def process_image(
                 primary_index=primary_index,
                 row_spacing_px=row_spacing_px
             )
+        elif algorithm == "robust_exgr":
+            # Use new robust ExGR pipeline (permissive version)
+            weed_data = weed.detect_weeds_robust(img_rgb, sensitivity)
+        elif algorithm == "robust_exgr_v1":
+            # Use conservative version of robust ExGR pipeline  
+            weed_data = weed.detect_weeds_robust_v1(img_rgb, sensitivity)
         else:
             # Use robust detection for backward compatibility
             weed_data = robust_detection.detect_weeds_robust_pipeline(

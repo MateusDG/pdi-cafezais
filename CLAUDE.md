@@ -29,6 +29,7 @@ npm install
 npm run dev          # Development server
 npm run build        # Production build
 npm run preview      # Preview production build
+npx tsc --noEmit     # Type checking only
 ```
 Frontend runs on: http://localhost:5173 (proxy configured for /api -> http://localhost:8000)
 
@@ -62,19 +63,31 @@ docker-compose -f docker-compose.dev.yml logs -f        # View dev logs
 - ✅ **Production-ready** Nginx configuration
 - ✅ **Backup/restore** scripts for production data
 
+### Testing
+```bash
+# Backend tests (Python)
+python tests/test_week1.py         # Comprehensive implementation tests
+pytest tests/                      # Run all pytest tests
+
+# Frontend type checking
+cd frontend && npx tsc --noEmit     # TypeScript type checking
+```
+
 ## Architecture
 
 ### Backend Structure
-- **FastAPI app** with CORS middleware for frontend integration
-- **API endpoints**: `/api/health` and `/api/process` for image processing
+- **FastAPI app** (`app/main.py`) with CORS middleware for frontend integration
+- **API endpoints**:
+  - `app/api/endpoints/health.py` - Health check endpoint
+  - `app/api/endpoints/process.py` - Image processing endpoints (`/api/process`)
 - **Processing services**: Located in `app/services/processing/`
   - `gaps.py` - Detection of planting gaps/lacunas (TODO)
   - `vigor.py` - Plant vigor analysis 
   - `weed.py` - Weed detection
   - `utils.py` - Common processing utilities
-- **Configuration**: Environment-based settings in `app/core/config.py`
+- **Configuration**: Environment-based settings in `app/core/config.py` and `app/core/logging.py`
+- **Schemas**: Pydantic models in `app/schemas/process.py` for request/response validation
 - **Static files**: Processed results served from `app/static/results/`
-- **Templates**: Jinja2 templates for basic HTML responses
 
 ### Frontend Structure
 - **React 18** with TypeScript
