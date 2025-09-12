@@ -127,9 +127,9 @@ def detect_sky_and_ground_roi(img: np.ndarray, margin_percent: float = 0.05) -> 
 
 
 def create_green_gate_hsv(img: np.ndarray, 
-                         hue_range: Tuple[int, int] = (35, 95),
-                         min_saturation: float = 0.25,
-                         min_value: float = 0.15) -> np.ndarray:
+                         hue_range: Tuple[int, int] = (25, 105),
+                         min_saturation: float = 0.20,
+                         min_value: float = 0.12) -> np.ndarray:
     """
     Cria gate cromático para tons de verde.
     
@@ -160,7 +160,7 @@ def create_green_gate_hsv(img: np.ndarray,
     return green_gate.astype(np.uint8) * 255
 
 
-def calculate_vegetation_index_with_gate(img: np.ndarray, green_gate: np.ndarray, index_type: str = 'ExGR') -> Tuple[np.ndarray, float]:
+def calculate_vegetation_index_with_gate(img: np.ndarray, green_gate: np.ndarray, index_type: str = 'ExGR', otsu_offset: int = -15) -> Tuple[np.ndarray, float]:
     """
     Calcula índice de vegetação apenas dentro do gate verde com Otsu local.
     
@@ -214,8 +214,11 @@ def calculate_vegetation_index_with_gate(img: np.ndarray, green_gate: np.ndarray
     # Apply Otsu only to gate pixels
     threshold_otsu, _ = cv2.threshold(gate_normalized, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     
+    # Apply negative offset to make threshold more permissive
+    threshold_otsu_adjusted = max(0, threshold_otsu + otsu_offset)
+    
     # Convert back to original scale
-    threshold_original = gate_min + (threshold_otsu / 255.0) * (gate_max - gate_min)
+    threshold_original = gate_min + (threshold_otsu_adjusted / 255.0) * (gate_max - gate_min)
     
     # Create vegetation mask
     vegetation_mask = (index > threshold_original) & (green_gate > 0)
@@ -325,7 +328,7 @@ def detect_crop_rows_reliable(vegetation_mask: np.ndarray,
 
 def create_soil_mask(img: np.ndarray) -> np.ndarray:
     """
-    Cria máscara de solo para filtro "toca solo".
+    Cria máscara de solo para filtro "toca solo" - versão expandida.
     
     Args:
         img: Imagem RGB
@@ -338,12 +341,11 @@ def create_soil_mask(img: np.ndarray) -> np.ndarray:
     s = hsv[:, :, 1].astype(np.float32) / 255.0
     v = hsv[:, :, 2].astype(np.float32) / 255.0
     
-    # Soil criteria: brownish hues + low to medium saturation
+    # Expanded soil criteria for various soil types
     soil_mask = (
-        (((h >= 10) & (h <= 35)) |  # Brown/orange hues
-         ((h >= 0) & (h <= 10)) |   # Red-brown
-         (s < 0.2)) &               # Low saturation (gray soil)
-        (v > 0.2) & (v < 0.9)       # Medium brightness
+        (((h >= 0) & (h <= 35)) |   # Brown/red/orange hues (expanded)
+         (s < 0.25)) &              # Low saturation (gray/light soil - more permissive)
+        (v > 0.15) & (v < 0.95)     # Wider brightness range
     )
     
     return soil_mask.astype(np.uint8) * 255
@@ -396,30 +398,47 @@ def oblique_weed_detection_pipeline(img: np.ndarray,
         # 3. Gate cromático de verde
         logger.info("Creating green gate")
         green_gate = create_green_gate_hsv(processed_img, 
-                                          hue_range=(35, 95),
-                                          min_saturation=0.25,
-                                          min_value=0.15)
+                                          hue_range=(25, 105),
+                                          min_saturation=0.20,
+                                          min_value=0.12)
         # Intersect with ROI
         green_gate = cv2.bitwise_and(green_gate, ground_roi)
         results['green_gate'] = green_gate
         
+        # Debug counts
+        roi_pixels = cv2.countNonZero(ground_roi)
+        gate_pixels = cv2.countNonZero(green_gate)
+        logger.info(f"ROI pixels: {roi_pixels}, Green gate pixels: {gate_pixels} ({100*gate_pixels/roi_pixels:.1f}% of ROI)")
+        
         # 4. Índice de vegetação + limiarização
         logger.info(f"Calculating {primary_index} index with Otsu thresholding")
-        vegetation_mask, threshold_used = calculate_vegetation_index_with_gate(processed_img, green_gate, primary_index)
+        # Sensitivity affects Otsu offset: higher sensitivity = more negative offset (more permissive)
+        otsu_offset = int(-10 - (sensitivity * 8))  # Range: -10 to -18
+        vegetation_mask, threshold_used = calculate_vegetation_index_with_gate(processed_img, green_gate, primary_index, otsu_offset=otsu_offset)
         # Intersect with ROI
         vegetation_mask = cv2.bitwise_and(vegetation_mask, ground_roi)
         results['vegetation_mask'] = vegetation_mask
         results['vegetation_threshold'] = threshold_used
         
+        # Debug counts
+        veg_pixels_raw = cv2.countNonZero(vegetation_mask)
+        logger.info(f"Vegetation pixels (raw): {veg_pixels_raw} ({100*veg_pixels_raw/roi_pixels:.1f}% of ROI), threshold: {threshold_used:.3f}")
+        
         # 5. Pós-processamento morfológico
         logger.info("Morphological cleanup")
-        min_area_ratio = 2e-5 * (1.0 - sensitivity * 0.5)  # Sensitivity affects min area
+        # Reduced minimum area - more sensitive to small weeds
+        # Base area is ~18px for 720x1280 image (0.002%)
+        min_area_ratio = 0.002e-2 * (1.0 - sensitivity * 0.6)  # More aggressive reduction with sensitivity
         vegetation_mask = morphological_cleanup(vegetation_mask, 
                                               opening_kernel_size=3,
                                               min_area_ratio=min_area_ratio)
         # Re-intersect with ROI
         vegetation_mask = cv2.bitwise_and(vegetation_mask, ground_roi)
         results['vegetation_mask_cleaned'] = vegetation_mask
+        
+        # Debug counts after morphological cleanup
+        veg_pixels_cleaned = cv2.countNonZero(vegetation_mask)
+        logger.info(f"Vegetation pixels (after morphology): {veg_pixels_cleaned} ({100*veg_pixels_cleaned/roi_pixels:.1f}% of ROI), min_area: {int(total_pixels * min_area_ratio)}px")
         
         # 6. Fileiras do café (opcional/condicional)
         logger.info("Attempting crop row detection")
@@ -460,7 +479,7 @@ def oblique_weed_detection_pipeline(img: np.ndarray,
         closing_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         weed_mask_base = cv2.morphologyEx(weed_mask_base, cv2.MORPH_CLOSE, closing_kernel)
         
-        # Remove small components again
+        # Remove small components again (use same reduced min area)
         weed_mask_base = morphological_cleanup(weed_mask_base, 
                                               opening_kernel_size=3,
                                               min_area_ratio=min_area_ratio)
@@ -470,22 +489,40 @@ def oblique_weed_detection_pipeline(img: np.ndarray,
         # 9. Filtro "toca solo"
         logger.info("Applying 'touches soil' filter")
         soil_mask = create_soil_mask(processed_img)
-        # Dilate soil mask slightly
-        soil_dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+        # Dilate soil mask for better contact detection
+        # Sensitivity affects dilation: higher sensitivity = more dilation (more permissive contact)
+        dilation_size = int(6 + (sensitivity * 4))  # Range: 6-10 pixels
+        soil_dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilation_size, dilation_size))
         soil_mask_dilated = cv2.dilate(soil_mask, soil_dilate_kernel)
         # Keep within ROI
         soil_mask_dilated = cv2.bitwise_and(soil_mask_dilated, ground_roi)
+        
+        # Debug counts before soil filter
+        weed_pixels_base = cv2.countNonZero(weed_mask_base)
+        soil_pixels = cv2.countNonZero(soil_mask_dilated)
+        logger.info(f"Weed pixels (base): {weed_pixels_base}, Soil pixels (dilated): {soil_pixels}")
         
         # Final weed mask: only weeds that touch soil
         weed_mask_final = cv2.bitwise_and(weed_mask_base, soil_mask_dilated)
         results['weed_mask_final'] = weed_mask_final
         results['soil_mask'] = soil_mask_dilated
         
+        # Debug final counts
+        weed_pixels_final = cv2.countNonZero(weed_mask_final)
+        logger.info(f"Weed pixels (final): {weed_pixels_final} ({100*weed_pixels_final/roi_pixels:.2f}% of ROI)")
+        
         # 10. Métricas e classificação
         logger.info("Calculating metrics and classification")
         
         # Find contours
         contours, _ = cv2.findContours(weed_mask_final, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Debug blob information
+        if contours:
+            blob_areas = [cv2.contourArea(c) for c in contours]
+            logger.info(f"Found {len(contours)} blobs, areas: min={min(blob_areas):.0f}, max={max(blob_areas):.0f}, avg={np.mean(blob_areas):.1f}")
+        else:
+            logger.info("No blobs found after all filters")
         
         # Calculate areas
         roi_area = cv2.countNonZero(ground_roi)
