@@ -149,13 +149,38 @@ def rgb_to_bgr(img: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
 
+def normalize_image_clahe(img: np.ndarray, clip_limit: float = 2.0, grid_size: int = 8) -> np.ndarray:
+    """
+    Aplica CLAHE (Contrast Limited Adaptive Histogram Equalization) para melhorar a detecção.
+    
+    Args:
+        img: Imagem RGB de entrada
+        clip_limit: Limite de corte para evitar over-amplification
+        grid_size: Tamanho da grade para equalização adaptativa
+        
+    Returns:
+        Imagem normalizada
+    """
+    # Convert to LAB color space for better processing
+    lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+    
+    # Apply CLAHE to L channel
+    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(grid_size, grid_size))
+    lab[:,:,0] = clahe.apply(lab[:,:,0])
+    
+    # Convert back to RGB
+    normalized = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+    
+    return normalized
+
+
 def create_processing_summary(
     weed_data: Dict[str, Any], 
     processing_time: float,
     image_stats: Dict[str, Any]
 ) -> Dict[str, Any]:
     """
-    Cria um resumo consolidado do processamento.
+    Cria um resumo consolidado do processamento com estatísticas detalhadas.
     
     Args:
         weed_data: Dados da detecção de ervas daninhas
@@ -163,8 +188,33 @@ def create_processing_summary(
         image_stats: Estatísticas da imagem
         
     Returns:
-        Resumo consolidado
+        Resumo consolidado com métricas avançadas
     """
+    # Convert area_stats if present
+    area_statistics = None
+    if weed_data.get('area_stats'):
+        area_statistics = {
+            'min_area': weed_data['area_stats']['min_area'],
+            'max_area': weed_data['area_stats']['max_area'],
+            'avg_area': weed_data['area_stats']['avg_area'],
+            'median_area': weed_data['area_stats']['median_area']
+        }
+    
+    # Generate detected issues based on analysis
+    detected_issues = []
+    weed_percentage = weed_data.get('weed_percentage', 0)
+    
+    if weed_percentage > 25:
+        detected_issues.append("Alta infestação de ervas daninhas detectada")
+    elif weed_percentage > 10:
+        detected_issues.append("Infestação moderada de ervas daninhas")
+    
+    if weed_data.get('bare_soil_percentage', 0) > 30:
+        detected_issues.append("Significativa área de solo exposto")
+    
+    if weed_data.get('coffee_percentage', 0) < 40:
+        detected_issues.append("Cobertura de café abaixo do ideal")
+    
     return {
         'processing_time_seconds': round(processing_time, 2),
         'image_stats': image_stats,
@@ -172,8 +222,14 @@ def create_processing_summary(
             'areas_detected': weed_data.get('weed_count', 0),
             'total_weed_area_pixels': weed_data.get('total_weed_area', 0),
             'weed_coverage_percentage': weed_data.get('weed_percentage', 0),
-            'detection_sensitivity': 0.5  # Default sensitivity
+            'coffee_coverage_percentage': weed_data.get('coffee_percentage', 0),
+            'vegetation_coverage_percentage': weed_data.get('vegetation_percentage', 0),
+            'bare_soil_percentage': weed_data.get('bare_soil_percentage', 0),
+            'detection_sensitivity': weed_data.get('sensitivity_used', 0.5),
+            'severity_level': weed_data.get('severity_level', 'Baixa'),
+            'density_per_sqm': weed_data.get('density_per_sqm', 0),
+            'area_statistics': area_statistics
         },
         'analysis_status': 'completed',
-        'detected_issues': []
+        'detected_issues': detected_issues
     }

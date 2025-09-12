@@ -6,7 +6,7 @@ import logging
 from typing import Optional
 
 from app.core.config import settings
-from app.services.processing import weed, utils
+from app.services.processing import weed, utils, robust_detection
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -14,7 +14,11 @@ logger = logging.getLogger(__name__)
 @router.post("/process")
 async def process_image(
     file: UploadFile = File(...), 
-    sensitivity: float = Query(0.5, ge=0.0, le=1.0, description="Sensibilidade de detecção (0.0-1.0)")
+    sensitivity: float = Query(0.5, ge=0.0, le=1.0, description="Sensibilidade de detecção (0.0-1.0)"),
+    algorithm: str = Query("vegetation_indices", description="Algoritmo: 'vegetation_indices' (robusto) ou 'hsv_fallback'"),
+    normalize_illumination: bool = Query(True, description="Aplicar normalização de iluminação"),
+    primary_index: str = Query("ExGR", description="Índice primário: 'ExG', 'ExGR', ou 'CIVE'"),
+    row_spacing_px: Optional[int] = Query(None, description="Espaçamento entre linhas em pixels (auto se None)")
 ):
     """
     Processa imagem de cafezal para detectar ervas daninhas.
@@ -76,8 +80,15 @@ async def process_image(
         # Calculate image statistics
         image_stats = utils.calculate_image_stats(img_bgr)
         
-        # Perform weed detection
-        weed_data = weed.detect_weeds_hsv(img_rgb, sensitivity=sensitivity)
+        # Perform robust weed detection
+        weed_data = robust_detection.detect_weeds_robust_pipeline(
+            img=img_rgb, 
+            sensitivity=sensitivity,
+            algorithm=algorithm,
+            normalize_illumination=normalize_illumination,
+            primary_index=primary_index,
+            row_spacing_px=row_spacing_px
+        )
         
         # Convert annotated image back to BGR for saving
         img_annotated_bgr = utils.rgb_to_bgr(weed_data['annotated_image'])
@@ -113,8 +124,11 @@ async def process_image(
             "analysis_notes": f"Análise concluída em {processing_time:.1f}s. Detectadas {weed_data['weed_count']} áreas de ervas daninhas ({weed_data['weed_percentage']:.1f}% da imagem).",
             "processing_parameters": {
                 "sensitivity": sensitivity,
-                "algorithm": "HSV_segmentation",
-                "version": "1.0"
+                "algorithm": algorithm,
+                "normalize_illumination": normalize_illumination,
+                "primary_index": primary_index,
+                "row_spacing_px": row_spacing_px,
+                "version": "2.0_robust"
             }
         }
         
@@ -142,11 +156,17 @@ async def get_processing_status():
     """
     Retorna informações sobre o status do sistema de processamento.
     """
+    algorithm_info = robust_detection.get_algorithm_info()
+    
     return JSONResponse({
         "status": "operational",
-        "algorithms_available": ["HSV_weed_detection"],
+        "algorithms_available": list(algorithm_info['algorithms'].keys()),
+        "algorithm_details": algorithm_info['algorithms'],
         "supported_formats": ["JPG", "JPEG", "PNG", "BMP", "TIFF"],
         "max_file_size_mb": 50,
         "max_image_dimension": 2048,
-        "version": "1.0.0"
+        "vegetation_indices": ["ExG", "ExGR", "CIVE"],
+        "normalization_pipeline": algorithm_info['normalization_pipeline'],
+        "parameters": algorithm_info['parameters'],
+        "version": "2.0.0_robust"
     })

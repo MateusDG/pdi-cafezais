@@ -12,11 +12,24 @@ class ImageStats(BaseModel):
     std_brightness: float
 
 
+class AreaStatistics(BaseModel):
+    min_area: int
+    max_area: int
+    avg_area: float
+    median_area: int
+
+
 class WeedDetection(BaseModel):
     areas_detected: int
     total_weed_area_pixels: int
     weed_coverage_percentage: float
+    coffee_coverage_percentage: float
+    vegetation_coverage_percentage: float
+    bare_soil_percentage: float
     detection_sensitivity: float
+    severity_level: str  # 'Baixa', 'Moderada', 'Alta', 'Crítica'
+    density_per_sqm: float
+    area_statistics: Optional[AreaStatistics] = None
 
 
 class ProcessingSummary(BaseModel):
