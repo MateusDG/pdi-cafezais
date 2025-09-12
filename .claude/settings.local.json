@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(chmod:*)",
+      "Bash(docker:*)",
+      "Bash(docker-compose:*)",
+      "Bash(npm install)",
+      "Bash(curl:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

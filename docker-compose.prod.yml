@@ -1,0 +1,106 @@
+networks:
+  cafe-network-prod:
+    driver: bridge
+
+volumes:
+  cafe-data-prod:
+    driver: local
+  cafe-results-prod:
+    driver: local
+  postgres-data:
+    driver: local
+
+services:
+  api:
+    build: 
+      context: ./backend
+      target: production
+    container_name: cafe-mapper-api-prod
+    restart: always
+    networks:
+      - cafe-network-prod
+    expose:
+      - "8000"
+    volumes:
+      - cafe-data-prod:/app/data
+      - cafe-results-prod:/app/app/static/results
+    environment:
+      - ENV=production
+      - DATA_DIR=/app/data
+      - OUTPUTS_DIR=/app/data/outputs
+      - STATIC_RESULTS=/app/app/static/results
+      - PYTHONPATH=/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  web:
+    build: 
+      context: ./frontend
+      target: production
+    container_name: cafe-mapper-web-prod
+    restart: always
+    networks:
+      - cafe-network-prod
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Future: Database for storing analysis history
+  # db:
+  #   image: postgres:15-alpine
+  #   container_name: cafe-mapper-db-prod
+  #   restart: always
+  #   networks:
+  #     - cafe-network-prod
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #   environment:
+  #     - POSTGRES_DB=cafedb
+  #     - POSTGRES_USER=cafeuser
+  #     - POSTGRES_PASSWORD=secure_password_change_me
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U cafeuser -d cafedb"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5

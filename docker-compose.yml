@@ -1,24 +1,87 @@
-version: "3.8"
+networks:
+  cafe-network:
+    driver: bridge
+
+volumes:
+  cafe-data:
+    driver: local
+  cafe-results:
+    driver: local
+
 services:
   api:
-    build: ./backend
+    build: 
+      context: ./backend
+      target: production
     container_name: cafe-mapper-api
+    restart: unless-stopped
+    networks:
+      - cafe-network
     ports:
       - "8000:8000"
     volumes:
-      - ./backend/app:/app/app
-      - ./data:/app/data
+      - cafe-data:/app/data
+      - cafe-results:/app/app/static/results
+      - ./backend/app:/app/app:ro  # Read-only code mount for development
     environment:
-      - ENV=dev
+      - ENV=production
+      - DATA_DIR=/app/data
+      - OUTPUTS_DIR=/app/data/outputs
+      - STATIC_RESULTS=/app/app/static/results
+      - PYTHONPATH=/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
 
   web:
-    build: ./frontend
+    build: 
+      context: ./frontend
+      target: production
     container_name: cafe-mapper-web
+    restart: unless-stopped
+    networks:
+      - cafe-network
     ports:
-      - "5173:5173"
+      - "80:80"
     environment:
-      - VITE_API_URL=http://api:8000
-    volumes:
-      - ./frontend:/app
+      - NODE_ENV=production
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+
+  # Optional: Redis for caching (future enhancement)
+  # redis:
+  #   image: redis:alpine
+  #   container_name: cafe-mapper-redis
+  #   restart: unless-stopped
+  #   networks:
+  #     - cafe-network
+  #   volumes:
+  #     - redis-data:/data
+  #   command: redis-server --appendonly yes
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
